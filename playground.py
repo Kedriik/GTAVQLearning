@@ -61,7 +61,7 @@ class agentU():
         hidden4        = tf.layers.dense(hidden3,10,activation=tf.nn.tanh,name="hidden4")
         
         self.action_logits  = tf.layers.dense(hidden4,9, activation=tf.nn.softmax)
-        self.reward_in      = tf.placeholder(shape = [None, 1], dtype = tf.float32)
+        self.reward_in      = tf.placeholder(shape = [1], dtype = tf.float32)
         self.optimizer = tf.train.AdamOptimizer(lr)
         #self.loss = tf.losses.mean_squared_error(self.action_in, tf.log(self.action_logits))
         #self.minimize = self.optimizer.minimize(self.loss)

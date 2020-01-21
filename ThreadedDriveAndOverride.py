@@ -3,7 +3,7 @@ import cv2
 import time
 from grabscreen import grab_screen
 from getkeys import key_check
-from directkeys import PressKey, ReleaseKey, W,A,S,D
+from directkeys import PressKey, ReleaseKey, W,A,S,D,T
 from random import random
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
@@ -217,7 +217,9 @@ def gather_input():
 teach_agent_flag = True
 save_flag = False
 pause_learning = True
+reset_time = 0
 def teach_agent():
+    global reset_time
     tf.reset_default_graph()
     total_loss=0
     counter=0
@@ -237,14 +239,15 @@ def teach_agent():
             sleep(1)
             sess.run(init)
             print('Initialization complete')
-        fileHandle = win32file.CreateFile(r'\\.\pipe\Demo', 
+        fileHandle = win32file.CreateFile(r'\\.\pipe\VStreaming', 
                                           win32file.GENERIC_READ | win32file.GENERIC_WRITE, 0, None, 
                                           win32file.OPEN_EXISTING, 0, None)
+
         while(teach_agent_flag):
             loop_start = time.time()
             state = get_state()
             left, data = win32file.ReadFile(fileHandle, 4)
-            v = struct.unpack('f',data)
+            v = struct.unpack('f',data)[0]
             #xxx
             feed_dict_learn={agent.state_in:[state],agent.reward_in:[v]}
             #xxxxxxxxxxxxxxx
@@ -253,6 +256,8 @@ def teach_agent():
             a[np.argmax(action)] = 1
             releaseKeys()
             update_pressed_keys(categoriesToKeys(a))
+            
+                
 # =============================================================================
 #             print("Action:",action)
 #             print("V:",v)
@@ -264,8 +269,20 @@ def teach_agent():
             #if pause_learning == True:
             #    continue
             
-            counter+=1
             loop_duration = time.time() - loop_start
+            if v < 10:
+                reset_time = reset_time + loop_duration
+                if reset_time > 10:
+                    PressKey(T)
+                    sleep(1)
+                    ReleaseKey(T)
+                    sleep(1)
+                    PressKey(T)
+                    sleep(1)
+                    ReleaseKey(T)
+                    reset_time = 0
+            else:
+                reset_time = 0
             del state
             #print("Loop duration:",loop_duration)
             #if(loop_duration < 0.5):
@@ -358,10 +375,12 @@ def control():
             print ('collecting data stopped')
             break
         
-        if 'T' in keys and collectData == False:
-            print ('Saving agent, please wait') #x
-            #saver.save(sess, '/tmp/model{}.ckpt'.format(teach_count))x
-            print('Saved.');
+# =============================================================================
+#         if 'T' in keys and collectData == False:
+#             print ('Saving agent, please wait') #x
+#             #saver.save(sess, '/tmp/model{}.ckpt'.format(teach_count))x
+#             print('Saved.');
+# =============================================================================
    
         time1 = time.time()
         delta_time = time1 - time0
