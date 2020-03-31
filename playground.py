@@ -82,7 +82,7 @@ class agentU():
         hidden4        = tf.compat.v1.layers.dense(hidden3,100,activation=tf.nn.tanh,name="hidden4")
         
         self.action_logits  = tf.compat.v1.layers.dense(hidden4,9, activation=tf.nn.relu,name="action_logits")
-        self.action         = tf.compat.v1.layers.dense(hidden4,9, activation=tf.nn.softmax,name="action_softmax")
+        #self.action         = tf.compat.v1.layers.dense(hidden4,9, activation=tf.nn.softmax,name="action_softmax")
         self.result         = tf.compat.v1.placeholder(dtype = tf.float32, shape=(None, 9))
         self.loss = tf.compat.v1.losses.mean_squared_error(labels = self.result, predictions = self.action_logits)
         self.optimizer = tf.compat.v1.train.AdamOptimizer(lr).minimize(self.loss)
@@ -90,8 +90,10 @@ class agentU():
 class AgentU(tf.keras.Model):
     def __init__(self,lr,s_size):
         super(AgentU,self).__init__()
-        self.state_in = tf.keras.Input(shape=(s_size[0],s_size[1],s_size[2]), dtype=np.float)
-        self.vs_in     = tf.keras.Input(shape = (1), dtype = np.float)
+        #self.state_in = tf.keras.Input(shape=(s_size[0],s_size[1],s_size[2]), dtype=np.float)
+        #self.vs_in     = tf.keras.Input(shape = (1), dtype = np.float)
+        self.in_shape = s_size
+        #self.inputs = [self.state_in, self.vs_in]
         self.conv1 = tf.keras.layers.Conv2D(24,5,(4,4))#(normalised_img)
         self.conv2 = tf.keras.layers.Conv2D(36,5,(2,2))#(conv1)
         self.conv3 = tf.keras.layers.Conv2D(48,3,(2,2))#(conv2)
@@ -101,8 +103,14 @@ class AgentU(tf.keras.Model):
         self.hidden2 = tf.keras.layers.Dense(100,tf.nn.tanh)#(hidden1)
         self.logits = tf.keras.layers.Dense(9,tf.nn.relu)#(hidden2)
         self.action = tf.keras.layers.Dense(9,tf.nn.softmax)#(hidden2)
+        self.loss_fnc = tf.keras.losses.MeanSquaredError()
+        self.optimizer = tf.keras.optimizers.Adam()
+        self.train_loss = tf.keras.metrics.Mean(name='train_loss')
+        self.train_accuracy = tf.keras.metrics.MeanSquaredError(name='train_accuracy')
         
     def call(self, x,training=False):
+        #visual = self.state_in(x[0])
+        #speed  = self.vs_in(x[1])
         visual = x[0]
         speed  = x[1]
         visual = tf.image.per_image_standardization(visual)
@@ -115,36 +123,38 @@ class AgentU(tf.keras.Model):
         visual_with_speed = self.hidden1(visual_with_speed)
         visual_with_speed = self.hidden2(visual_with_speed)
         logits = self.logits(visual_with_speed)
-        action = self.action(visual_with_speed)
-        return logits, action
-
-def train_step(vision, speed, action, model):
-    loss_object = tf.keras.losses.MeanSquaredError()
-    optimizer = tf.keras.optimizers.Adam()
-    train_loss = tf.keras.metrics.Mean(name='train_loss')
-    train_accuracy = tf.keras.metrics.MeanSquaredError(name='train_accuracy')
-    with tf.GradientTape() as tape:
-        logits, action = model([vision, speed])
-        print(action)
-        reward = 100
-        r_tensor = tf.Variable(reward,dtype=np.float) 
-        rewarded_action = tf.math.multiply(r_tensor, action)    
-
-        loss = loss_object(rewarded_action, logits)
-    gradients = tape.gradient(loss, model.trainable_variables)
-    optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-    train_loss(loss)
-    train_accuracy(action*reward, logits)
+#        action = self.action(visual_with_speed)
+        return logits
+    
+# =============================================================================
+#     def train_step(self, vision, speed, action):
+#         with tf.GradientTape() as tape:
+#             logits, action = self.call([vision, speed])
+#             print(action)
+#             reward = 100
+#             r_tensor = tf.Variable(reward,dtype=np.float) 
+#             rewarded_action = tf.math.multiply(r_tensor, action)    
+#     
+#             self.loss = self.loss_object(rewarded_action, logits)
+#             gradients = tape.gradient(self.loss, self.trainable_variables)
+#             self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+#             self.train_loss(self.loss)
+#             self.train_accuracy(action*reward, logits)
+# =============================================================================
+        
+        
 testAgent = AgentU(0.1,(reshape_size[0],reshape_size[1],1))
+testAgent.compile(optimizer=testAgent.optimizer,loss=testAgent.loss_fnc,metrics=['accuracy'])
 state = None
 speed = None
-for i in range(1):
+for i in range(10):
     state = get_state()
     state=state.reshape(-1,reshape_size[0],reshape_size[1],1)
     speed = 100
-    train_step(np.array(state,dtype=np.float), np.array([speed],dtype=np.float).reshape(-1,1), np.array([0,0,0,0,0,0,0,0,1],dtype=np.float),testAgent)
-print(testAgent.predict([np.array(state,dtype=np.float), np.array([speed],dtype=np.float).reshape(-1,1), np.array([0,0,0,0,0,0,0,0,1],dtype=np.float)]))
-#testAgent._set_inputs(np.array(state,dtype=np.float), np.array([speed],dtype=np.float).reshape(-1,1))
+    raw_action = testAgent([np.array(state,dtype=np.float), np.array(speed,dtype=np.float).reshape(-1,1)])
+    action = tf.nn.softmax(raw_action).numpy()
+    testAgent.fit([np.array(state,dtype=np.float), np.array(speed,dtype=np.float).reshape(-1,1)],np.array(action,dtype=np.float).reshape(-1,9),batch_size=1)
+
 path = 'D:\Grand Theft Auto V\scripts\DummyModel'
 testAgent.save(path)
 testAgent=tf.keras.models.load_model(path)
