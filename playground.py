@@ -143,20 +143,22 @@ class AgentU(tf.keras.Model):
 # =============================================================================
         
         
-testAgent = AgentU(0.1,(reshape_size[0],reshape_size[1],1))
-testAgent.compile(optimizer=testAgent.optimizer,loss=testAgent.loss_fnc,metrics=['accuracy'])
-state = None
-speed = None
-for i in range(10):
-    state = get_state()
-    state=state.reshape(-1,reshape_size[0],reshape_size[1],1)
-    speed = 100
-    raw_action = testAgent([np.array(state,dtype=np.float), np.array(speed,dtype=np.float).reshape(-1,1)])
-    action = tf.nn.softmax(raw_action).numpy()
-    testAgent.fit([np.array(state,dtype=np.float), np.array(speed,dtype=np.float).reshape(-1,1)],np.array(action,dtype=np.float).reshape(-1,9),batch_size=1)
-
-path = 'D:\Grand Theft Auto V\scripts\DummyModel'
-testAgent.save(path)
+# =============================================================================
+# testAgent = AgentU(0.1,(reshape_size[0],reshape_size[1],1))
+# testAgent.compile(optimizer=testAgent.optimizer,loss=testAgent.loss_fnc,metrics=['accuracy'])
+# state = None
+# speed = None
+# for i in range(10):
+#     state = get_state()
+#     state=state.reshape(-1,reshape_size[0],reshape_size[1],1)
+#     speed = 100
+#     raw_action = testAgent([np.array(state,dtype=np.float), np.array(speed,dtype=np.float).reshape(-1,1)])
+#     action = tf.nn.softmax(raw_action).numpy()
+#     testAgent.fit([np.array(state,dtype=np.float), np.array(speed,dtype=np.float).reshape(-1,1)],np.array(action,dtype=np.float).reshape(-1,9),batch_size=1)
+# 
+# path = 'D:\Grand Theft Auto V\scripts\DummyModel'
+# testAgent.save(path)
+# =============================================================================
 testAgent=tf.keras.models.load_model(path)
 
 class AgentX(tf.keras.Model):

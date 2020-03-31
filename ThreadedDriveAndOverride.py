@@ -6,14 +6,15 @@ from getkeys import key_check
 from directkeys import PressKey, ReleaseKey, W,A,S,D,T
 from random import random
 import tensorflow as tf
-import tensorflow.contrib.slim as slim
-from playground import agentZ, agentY, agentU
+#import tensorflow.contrib.slim as slim
+from playground import AgentU
 from threading import Thread
 from threading import Lock
 from time import sleep
 from math import sqrt, exp
 import win32file
 import struct
+from numpy_ringbuffer import RingBuffer
 capture_region = (0,40,1280,720)
 reshape_size = (int(720/2),int(1280/2))
 
@@ -83,13 +84,13 @@ def update_pressed_keys(keys):
     ReleaseKey(A)
     ReleaseKey(D)
     if keys[0] == 1:
-        PressKey(W)
-    if keys[1] == 1:
-        PressKey(S)
-    if keys[2] == 1:
         PressKey(A)
-    if keys[3] == 1:
+    if keys[1] == 1:
+        PressKey(W)
+    if keys[2] == 1:
         PressKey(D)
+    if keys[3] == 1:
+        PressKey(S)
         
 def releaseKeys():
     ReleaseKey(W)
@@ -139,17 +140,19 @@ def get_state():
 
 def teach_agent(agent, all_rewards, all_gradients,sess):
     rewards = np.array(discount_and_normalize_rewards(all_rewards,0.99))
-    test = []
-    feed_dict = {}
-
-    
-    for var_index, gradient_placeholder in enumerate(agent.gradient_placeholders):
-        mean_gradients = np.mean([reward * all_gradients[game_index][step][var_index]
-                                  for game_index, rewards in enumerate(all_rewards)
-                                      for step, reward in enumerate(rewards)], axis=0)
-        
-        feed_dict[gradient_placeholder] = mean_gradients
-    ret = sess.run(agent.training_op, feed_dict=feed_dict)  
+# =============================================================================
+#     test = []
+#     feed_dict = {}
+# 
+#     
+#     for var_index, gradient_placeholder in enumerate(agent.gradient_placeholders):
+#         mean_gradients = np.mean([reward * all_gradients[game_index][step][var_index]
+#                                   for game_index, rewards in enumerate(all_rewards)
+#                                       for step, reward in enumerate(rewards)], axis=0)
+#         
+#         feed_dict[gradient_placeholder] = mean_gradients
+#     ret = sess.run(agent.training_op, feed_dict=feed_dict)  
+# =============================================================================
     
 def teach_agent_rt(agent, reward, gradients, sess):
     feed_dict = {}
@@ -177,6 +180,22 @@ def normalize(v):
 def softmax(x):
     e_x = np.exp(x - np.max(x)) 
     return e_x / e_x.sum(axis=0) 
+
+def softmax1(x, axis=-1):
+    # save typing...
+    kw = dict(axis=axis, keepdims=True)
+
+    # make every value 0 or below, as exp(0) won't overflow
+    xrel = x - x.max(**kw)
+
+    # if you wanted better handling of small exponents, you could do something like this
+    # to try and make the values as large as possible without overflowing, The 0.9
+    # is a fudge factor to try and ignore rounding errors
+    #
+    #     xrel += np.log(np.finfo(float).max / x.shape[axis]) * 0.9
+
+    exp_xrel = np.exp(xrel)
+    return exp_xrel / exp_xrel.sum(**kw)  
 
 def harvest_input():
     global gathered_categories
@@ -213,115 +232,134 @@ def gather_input():
         
         gathered_velocities.append(v)
         mutex.release()
-        #sleep(0.1)
+def random_action(a, eps=0.1):
+  actions = [0,1,2,3,3,3,3,3,3,4,5,6,7,8]
+  p = np.random.random()
+  if p < (1 - eps):
+    return a
+  else:
+    return np.random.choice(actions)
 teach_agent_flag = True
 save_flag = False
 pause_learning = True
 reset_time = 0
+HISTORY_SIZE = 30
+
+visual_history = RingBuffer(capacity=HISTORY_SIZE, dtype=np.float)
+speed_history = RingBuffer(capacity=HISTORY_SIZE, dtype=np.float)
 def teach_agent():
     global reset_time
-    tf.reset_default_graph()
+    #tf.compat.v1.reset_default_graph()
     total_loss=0
     counter=0
     path_to_agent = AGENT_NAME
-    agent = agentU(0.1,(reshape_size[0],reshape_size[1],1),9,11)
-    saver = tf.train.Saver()
-    with tf.Session() as sess:
-        try:
-            with open('{}.index'.format(path_to_agent),'r') as fh:
-                print('Agent {} exists. Loading.'.format(AGENT_NAME))
-                saver.restore(sess,path_to_agent)
-                print('Loading complete')
-        except FileNotFoundError:
-            print('Agent {} doesnt exist.Initializing.'.format(AGENT_NAME))
-            
-            init = tf.global_variables_initializer()
-            sleep(1)
-            sess.run(init)
-            print('Initialization complete')
-        fileHandle = win32file.CreateFile(r'\\.\pipe\VStreaming', 
-                                          win32file.GENERIC_READ | win32file.GENERIC_WRITE, 0, None, 
-                                          win32file.OPEN_EXISTING, 0, None)
+    agent = AgentU(0.1,(reshape_size[0],reshape_size[1],1))
+    agent.compile(optimizer=agent.optimizer,loss=agent.loss_fnc,metrics=['accuracy'])
+    q_debug_mode = True
+    
+    try:
+        with open('{}.index'.format(path_to_agent),'r') as fh:
+            print('Agent {} exists. Loading.'.format(AGENT_NAME))
+            testAgent=tf.keras.models.load_model(path_to_agent)
+            print('Loading complete')
+    except FileNotFoundError:
+        print('Agent {} doesnt exist.Initializing.'.format(AGENT_NAME))
+        print('Initialization complete')
 
-        while(teach_agent_flag):
-            loop_start = time.time()
-            state = get_state()
-            left, data = win32file.ReadFile(fileHandle, 4)
-            v = struct.unpack('f',data)[0]
-            #xxx
-            feed_dict_learn={agent.state_in:[state],agent.reward_in:[v]}
-            #xxxxxxxxxxxxxxx
-            action = sess.run([agent.action_logits], feed_dict=feed_dict_learn)
-            a = [0,0,0,0,0,0,0,0,0]
-            a[np.argmax(action)] = 1
-            releaseKeys()
-            update_pressed_keys(categoriesToKeys(a))
-            
-                
-# =============================================================================
-#             print("Action:",action)
-#             print("V:",v)
-#             cv2.imshow('State',state)
-#             if cv2.waitKey(25) & 0xFF==ord('q'):
-#                 cv2.destroyAllWindows()
-#                 break
-# =============================================================================
-            #if pause_learning == True:
-            #    continue
-            
-            loop_duration = time.time() - loop_start
-            if v < 10:
-                reset_time = reset_time + loop_duration
-                if reset_time > 10:
-                    PressKey(T)
-                    sleep(1)
-                    ReleaseKey(T)
-                    sleep(1)
-                    PressKey(T)
-                    sleep(1)
-                    ReleaseKey(T)
-                    reset_time = 0
-            else:
+    fileHandle = win32file.CreateFile(r'\\.\pipe\VStreaming', 
+                                      win32file.GENERIC_READ | win32file.GENERIC_WRITE, 0, None, 
+                                      win32file.OPEN_EXISTING, 0, None)
+    loop_duration = 0;
+    while(teach_agent_flag):
+        loop_start = time.time()
+        #get state
+        state = get_state()
+        left, data = win32file.ReadFile(fileHandle, 4)
+        speed = struct.unpack('f',data)[0]
+        raw_action = agent([np.array(state,dtype=np.float), np.array(speed,dtype=np.float).reshape(-1,1)])
+        action = tf.nn.softmax(raw_action).numpy()
+        selected_index = np.argmax(action)
+        selected_index = random_action(selected_index,action[selected_index])
+        a= [0,0,0,0,0,0,0,0,0]
+        a[selected_index] = 1
+        releaseKeys()
+        update_pressed_keys(categoriesToKeys(a))
+        #receive reward
+        left, data = win32file.ReadFile(fileHandle, 4)
+        speed = struct.unpack('f',data)[0]
+        #print("Reward V:",v_orig)
+        v =speed/1
+        #rewarded_action = a*v
+       
+        if speed < 1:
+            reset_time = reset_time + loop_duration
+            v = -1
+            if reset_time > 10:
+                PressKey(T)
+                sleep(1)
+                ReleaseKey(T)
+                sleep(1)
+                PressKey(T)
+                sleep(1)
+                ReleaseKey(T)
                 reset_time = 0
-            del state
-            #print("Loop duration:",loop_duration)
-            #if(loop_duration < 0.5):
-             #   sleep(1 - loop_duration)
-        cv2.destroyAllWindows()                
-        saver.save(sess, path_to_agent)
+        else:
+            reset_time = 0
+            
+        reward = [0,0,0,0,0,0,0,0,0]
+        for i in range(9):
+            if i == selected_index:
+                reward[i] = raw_action[i] + 10*v;
+            else:
+                reward[i] = raw_action[i] - v;
+        reward = np.array(reward).reshape((-1,9))
+        agent.fit([np.array(state,dtype=np.float), np.array(speed,dtype=np.float).reshape(-1,1)],reward,batch_size=1)
+        
+        loop_duration = time.time() - loop_start
+        
+        del state
+        #print("Loop duration:",loop_duration)
+        #if(loop_duration < 0.5):
+         #   sleep(1 - loop_duration)sa
+    cv2.destroyAllWindows()
+    if(q_debug_mode==False):                
+        agent.save(path_to_agent)
         
 agent_plays_flag = True
 save_flag = False
 action = np.array([0,0,0,0,0,0,0,0,0])
 def agent_plays():
-    tf.reset_default_graph()
-    path_to_agent = AGENT_NAME
-    agent = agentU(0.1,(reshape_size[0],reshape_size[1],1),9,11)
-    saver = tf.train.Saver()
-    global action
-    with tf.Session() as sess:
-        try:
-            with open('{}.index'.format(path_to_agent),'r') as fh:
-                print('Agent {} exists. Loading.'.format(AGENT_NAME))
-                saver.restore(sess,path_to_agent)
-                print('Loading complete')
-        except FileNotFoundError:
-            print('Agent {} doesnt exist.Initializing.'.format(AGENT_NAME))
-            
-            init = tf.global_variables_initializer()
-            sleep(1)
-            sess.run(init)
-            print('Creation complete')
-#x
-        while(agent_plays_flag):
-            loop_start = time.time()
-            state = get_state()
-            feed_dict_steer = {agent.state_in:[state]}
-            action = np.array(sess.run([agent.action_logits], feed_dict = feed_dict_steer)[0][0])
-            loop_duration = time.time() - loop_start
-           # print("ML loop took:", loop_duration)
-            if(loop_duration < 0.5):
-                sleep(1 - loop_duration)
+    print("Dummy")
+# =============================================================================
+#     tf.reset_default_graph()
+#     path_to_agent = AGENT_NAME
+#     agent = agentU(0.1,(reshape_size[0],reshape_size[1],1),9,11)
+#     saver = tf.train.Saver()
+#     global action
+#     with tf.Session() as sess:
+#         try:
+#             with open('{}.index'.format(path_to_agent),'r') as fh:
+#                 print('Agent {} exists. Loading.'.format(AGENT_NAME))
+#                 saver.restore(sess,path_to_agent)
+#                 print('Loading complete')
+#         except FileNotFoundError:
+#             print('Agent {} doesnt exist.Initializing.'.format(AGENT_NAME))
+#             
+#             init = tf.global_variables_initializer()
+#             sleep(1)
+#             sess.run(init)
+#             print('Creation complete')
+# #x
+#         while(agent_plays_flag):
+#             loop_start = time.time()
+#             state = get_state()
+#             feed_dict_steer = {agent.state_in:[state]}
+#             action = np.array(sess.run([agent.action_logits], feed_dict = feed_dict_steer)[0][0])
+#             loop_duration = time.time() - loop_start
+#            # print("ML loop took:", loop_duration)
+#             if(loop_duration < 0.5):
+#                 sleep(1 - loop_duration)
+# =============================================================================
 #x                
 execute_inputs_flag  = True
 def execute_inputs():
@@ -386,18 +424,19 @@ def control():
         delta_time = time1 - time0
 play_flag = False
 def main():
-    tf.reset_default_graph()
     control_thread = Thread(target = control)
     control_thread.start()
     if(play_flag == False):
         #gather_input_thread = Thread(target = gather_input)
         #gather_input_thread.start()
-        teach_agent()    
+        g = tf.Graph()
+        with g.as_default():
+            teach_agent()    
         #gather_input_thread.join()
     else:
         execute_input_thread = Thread(target = execute_inputs)
         execute_input_thread.start()
-        agent_plays()
+        #agent_plays()
         execute_input_thread.join()
     control_thread.join()
         
